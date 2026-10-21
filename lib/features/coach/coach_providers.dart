@@ -150,6 +150,7 @@ class CoachController extends Notifier<CoachState> {
     final runId = ++_runId;
     state = state.copyWith(isSending: true);
     final usage = ref.read(usageTrackerProvider);
+    GeminiClient? client;
 
     try {
       final apiKey = await ref.read(apiKeyProvider.future);
@@ -160,8 +161,9 @@ class CoachController extends Notifier<CoachState> {
 
       final habitState = ref.read(habitNotifierProvider);
       final now = DateTime.now();
+      client = GeminiClient(apiKey: apiKey, model: ref.read(geminiModelProvider));
       final engine = CoachEngine(
-        GeminiClient(apiKey: apiKey, model: ref.read(geminiModelProvider)),
+        client,
         onUsage: (u) {
           usage.recordRequest(promptTokens: u.promptTokens, outputTokens: u.outputTokens);
         },
@@ -217,6 +219,7 @@ class CoachController extends Notifier<CoachState> {
       await usage.recordError(rateLimited: false);
       state = state.copyWith(isSending: false, error: 'Something went wrong: $e');
     } finally {
+      client?.close();
       ref.read(usageProvider.notifier).refresh();
     }
   }

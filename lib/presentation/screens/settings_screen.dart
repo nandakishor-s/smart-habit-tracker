@@ -120,15 +120,16 @@ class _ApiKeySectionState extends ConsumerState<_ApiKeySection> {
     final key = ref.read(apiKeyProvider).value;
     if (key == null) return;
     setState(() => _testing = true);
+    final client = GeminiClient(apiKey: key, model: ref.read(geminiModelProvider));
     try {
-      final models = await GeminiClient(apiKey: key, model: ref.read(geminiModelProvider))
-          .listModels();
+      final models = await client.listModels();
       if (!mounted) return;
       setState(() => _models = models);
       _snack('Key works ✓ (${models.length} Gemini models available)');
     } on CoachModelException catch (e) {
       if (mounted) _snack(e.userMessage);
     } finally {
+      client.close();
       if (mounted) setState(() => _testing = false);
     }
   }

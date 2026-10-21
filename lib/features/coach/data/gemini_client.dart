@@ -39,6 +39,9 @@ class GeminiClient implements CoachModel {
   /// The model that answered last (differs from [model] after a fallback).
   String get activeModel => _activeModel ?? model;
 
+  /// Releases the HTTP connections. Call once the client is no longer needed.
+  void close() => _http.close();
+
   Map<String, String> get _headers => {
         'Content-Type': 'application/json',
         'x-goog-api-key': apiKey,
