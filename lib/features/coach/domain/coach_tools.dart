@@ -22,7 +22,8 @@ class ToolResult {
 
 /// Gemini function declarations and handlers for the coach.
 ///
-/// Read tools (`list_habits`, `get_analytics`, `get_day_log`) answer right away.
+/// Read tools (`get_analytics`, `get_day_log`; `list_habits` is still handled
+/// but not offered) answer right away.
 /// Proposal tools (`propose_*`) never change data: they only return a
 /// [PlanItem] for the user to review and schedule.
 class CoachTools {
@@ -43,14 +44,13 @@ class CoachTools {
   }) : _uuid = uuid ?? const Uuid();
 
   static final List<Map<String, dynamic>> declarations = [
-    {
-      'name': 'list_habits',
-      'description': 'List all current habits with ids, icons, colors and creation dates.',
-    },
+    // No list_habits here: the system instruction already holds every habit,
+    // and offering the tool made the model spend a round trip re-reading it.
     {
       'name': 'get_analytics',
-      'description': 'Streaks, streak freezes, per-habit completion rates, weekday '
-          'performance and a day-by-day history for the last N days.',
+      'description': 'Only for periods longer than the 14 days already provided: '
+          'streaks, freezes, per-habit completion rates, weekday performance and '
+          'a day-by-day history for the last N days.',
       'parameters': {
         'type': 'object',
         'properties': {
@@ -249,7 +249,7 @@ class CoachTools {
       }, item);
 
   ToolResult _unknownHabit(Object? id) =>
-      ToolResult.error('No habit with id "$id". Call list_habits to get valid ids.');
+      ToolResult.error('No habit with id "$id". Use an id from CURRENT HABITS.');
 
   ToolResult _dayLog(Map<String, dynamic> args) {
     final date = _parseDate(args['date']);

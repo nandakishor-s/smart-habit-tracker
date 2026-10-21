@@ -109,7 +109,7 @@ void main() {
     test('Rejects unknown habit ids', () {
       final r = toolsWith().handle('propose_delete_habit', {'habit_id': 'nope', 'reason': ''});
       expect(r.planItem, isNull);
-      expect(r.response['error'], contains('list_habits'));
+      expect(r.response['error'], contains('CURRENT HABITS'));
     });
 
     test('Log change rejects future dates and dates before the habit existed', () {
@@ -377,5 +377,11 @@ void main() {
       await expectLater(hi(client), throwsA(isA<CoachModelException>()));
       expect(calls.length, 1);
     });
+  });
+
+  test('Habits are in the prompt, so list_habits is not offered as a tool', () {
+    final names = CoachTools.declarations.map((d) => d['name']).toList();
+    expect(names, isNot(contains('list_habits')));
+    expect(names, containsAll(['get_analytics', 'get_day_log', 'propose_add_habit']));
   });
 }
