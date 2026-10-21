@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:habit_track/features/coach/data/coach_model.dart';
+import 'package:habit_track/features/coach/data/gemini_client.dart';
 import 'package:habit_track/features/coach/data/groq_client.dart';
 import 'package:habit_track/features/coach/domain/coach_tools.dart';
 import 'package:http/http.dart' as http;
@@ -105,6 +106,77 @@ void main() {
       final model = FallbackCoachModel(_FakeModel(fail: CoachErrorKind.invalidKey), _FakeModel());
       await expectLater(_ask(model), throwsA(isA<CoachModelException>()));
     });
+  });
+
+  test('Gemini taking over mid-reply gets Groq tool steps as text', () async {
+    final groqTurn = parseGroqResponse({
+      'choices': [
+        {
+          'message': {
+            'content': null,
+            'tool_calls': [
+              {
+                'id': 'call_1',
+                'type': 'function',
+                'function': {'name': 'propose_add_habit', 'arguments': '{"title":"Walk"}'},
+              },
+            ],
+          },
+        },
+      ],
+    });
+    final contents = [
+      {
+        'role': 'user',
+        'parts': [
+          {'text': 'Morning routine please'}
+        ],
+      },
+      groqTurn.rawContent,
+      {
+        'role': 'user',
+        'parts': [
+          {
+            'functionResponse': {
+              'name': 'propose_add_habit',
+              'response': {'queued': true},
+            }
+          }
+        ],
+      },
+    ];
+
+    late Map<String, dynamic> sent;
+    final gemini = GeminiClient(
+      apiKey: 'test',
+      model: GeminiClient.defaultModel,
+      httpClient: MockClient((req) async {
+        sent = jsonDecode(req.body) as Map<String, dynamic>;
+        return http.Response(
+            jsonEncode({
+              'candidates': [
+                {
+                  'content': {
+                    'role': 'model',
+                    'parts': [
+                      {'text': 'Done, review your plan.'}
+                    ]
+                  }
+                }
+              ]
+            }),
+            200);
+      }),
+    );
+    final turn = await gemini.generate(systemInstruction: 's', contents: contents);
+    expect(turn.text, 'Done, review your plan.');
+
+    final body = jsonEncode(sent['contents']);
+    expect(body, isNot(contains('functionCall')));
+    expect(body, isNot(contains('functionResponse')));
+    expect(body, isNot(contains('producer')));
+    expect(body, contains('I called propose_add_habit'));
+    expect(body, contains('[Result of propose_add_habit]'));
   });
 }
 

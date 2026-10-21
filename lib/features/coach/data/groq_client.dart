@@ -213,7 +213,9 @@ ModelTurn parseGroqResponse(Map<String, dynamic> json) {
 
   final usage = json['usage'] as Map<String, dynamic>? ?? {};
   return ModelTurn(
-    rawContent: {'role': 'model', 'parts': parts},
+    // Marked so Gemini, if it takes over mid-reply, can tell these calls lack
+    // its thought signatures (see foreignTurnsAsText).
+    rawContent: {'role': 'model', 'producer': GroqClient.provider, 'parts': parts},
     text: text,
     functionCalls: calls,
     usage: TokenUsage(

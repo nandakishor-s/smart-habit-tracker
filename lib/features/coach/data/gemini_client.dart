@@ -64,7 +64,7 @@ class GeminiClient implements CoachModel {
           {'text': systemInstruction}
         ]
       },
-      'contents': contents,
+      'contents': foreignTurnsAsText(contents),
       if (tools.isNotEmpty)
         'tools': [
           {'functionDeclarations': tools}
@@ -217,4 +217,51 @@ ModelTurn parseGenerateResponse(Map<String, dynamic> json) {
           ((usage['thoughtsTokenCount'] as num?)?.toInt() ?? 0),
     ),
   );
+}
+
+/// Gemini rejects function calls that lack its thought signatures, which is
+/// the case for turns another provider made before Gemini took over. Those
+/// calls and their results are turned into plain text notes. Public for
+/// testing.
+List<Map<String, dynamic>> foreignTurnsAsText(List<Map<String, dynamic>> contents) {
+  if (!contents.any((c) => c.containsKey('producer'))) return contents;
+  final out = <Map<String, dynamic>>[];
+  var afterForeign = false;
+  for (final content in contents) {
+    final parts = (content['parts'] as List? ?? []).cast<Map<String, dynamic>>();
+    if (content.containsKey('producer')) {
+      out.add({
+        'role': 'model',
+        'parts': [
+          for (final p in parts)
+            if (p['functionCall'] is Map)
+              {
+                'text': 'I called ${p['functionCall']['name']} with '
+                    '${jsonEncode(p['functionCall']['args'] ?? {})}.'
+              }
+            else if (p['text'] is String)
+              {'text': p['text']},
+        ],
+      });
+      afterForeign = true;
+    } else if (afterForeign) {
+      out.add({
+        'role': content['role'],
+        'parts': [
+          for (final p in parts)
+            if (p['functionResponse'] is Map)
+              {
+                'text': '[Result of ${p['functionResponse']['name']}] '
+                    '${jsonEncode(p['functionResponse']['response'])}'
+              }
+            else
+              p,
+        ],
+      });
+      afterForeign = false;
+    } else {
+      out.add(content);
+    }
+  }
+  return out;
 }
