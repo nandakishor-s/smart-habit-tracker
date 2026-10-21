@@ -243,7 +243,7 @@ class CoachController extends Notifier<CoachState> {
             ),
             systemInstruction: buildSystemInstruction(
               now: now,
-              habitsSnapshot: habitState.habits.map(CoachTools.habitJson).toList(),
+              habitsSnapshot: CoachTools.snapshot(habitState.habits),
               analyticsSnapshot: buildAnalytics(
                 habits: habitState.habits,
                 logs: habitState.logs,

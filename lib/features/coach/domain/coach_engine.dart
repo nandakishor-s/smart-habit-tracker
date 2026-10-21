@@ -18,7 +18,11 @@ class EngineReply {
 /// with a fake [CoachModel].
 class CoachEngine {
   /// Chat messages sent as context (keeps requests small on the free tier).
-  static const int historyWindow = 12;
+  static const int historyWindow = 8;
+
+  /// Older coach replies are cut to this many characters; the latest one is
+  /// kept whole. Long replies were the biggest part of every request.
+  static const int oldReplyChars = 280;
 
   /// Max model requests per user message (each tool round is one request).
   static const int maxRounds = 5;
@@ -52,6 +56,16 @@ class CoachEngine {
       onUsage?.call(turn.usage);
       if (turn.text.isNotEmpty) textParts.add(turn.text);
       if (turn.functionCalls.isEmpty) break;
+
+      // Only proposals plus a message for the user: the reply is complete, so
+      // skip the extra request that would just acknowledge the tool results.
+      final onlyProposals = turn.functionCalls.every((c) => c.name.startsWith('propose_'));
+      if (onlyProposals && turn.text.isNotEmpty) {
+        for (final call in turn.functionCalls) {
+          _runTool(tools, call, proposed);
+        }
+        break;
+      }
 
       contents.add(turn.rawContent);
       contents.add({
@@ -100,9 +114,13 @@ class CoachEngine {
         : messages;
 
     final contents = <Map<String, dynamic>>[];
-    for (final m in window) {
+    final lastCoach = window.lastIndexWhere((m) => m.role == ChatRole.coach);
+    for (final (i, m) in window.indexed) {
       final role = m.role == ChatRole.coach ? 'model' : 'user';
-      final text = m.role == ChatRole.event ? '[App note] ${m.text}' : m.text;
+      var text = m.role == ChatRole.event ? '[App note] ${m.text}' : m.text;
+      if (m.role == ChatRole.coach && i != lastCoach && text.length > oldReplyChars) {
+        text = '${text.substring(0, oldReplyChars)}…';
+      }
       if (contents.isEmpty && role == 'model') continue;
       if (contents.isNotEmpty && contents.last['role'] == role) {
         (contents.last['parts'] as List).add({'text': text});
@@ -146,7 +164,7 @@ CHANGING DATA
 - You can NOT change anything directly. Use the propose_* tools to queue changes. The user reviews them and presses "Schedule" to apply.
 - Never say a change is done. Say it is in the plan, waiting for them to Schedule.
 - Use exact habit ids from the data. Propose a delete only when the user clearly wants a habit gone.
-- When proposing several changes, call all the propose_* tools together in one turn, not one per turn.
+- When proposing several changes, call all the propose_* tools together in one turn, not one per turn, and write your message to the user in that same turn.
 
 STYLE
 - Plain text only, no markdown symbols like ** or #. Short paragraphs; use "- " for lists.

@@ -140,7 +140,7 @@ class CoachTools {
     try {
       switch (name) {
         case 'list_habits':
-          return ToolResult({'habits': habits.map(habitJson).toList()});
+          return ToolResult({'habits': snapshot(habits)});
         case 'get_analytics':
           final days = ((args['days'] as num?)?.toInt() ?? 30).clamp(7, 90);
           return ToolResult(buildAnalytics(habits: habits, logs: logs, today: today, days: days));
@@ -261,13 +261,19 @@ class CoachTools {
       'date': key,
       'habits': [
         for (final h in active)
-          {'id': h.id, 'title': h.title, 'completed': log?.isHabitCompleted(h.id) ?? false},
+          {'id': aliasOf(habits, h), 'completed': log?.isHabitCompleted(h.id) ?? false},
       ],
       'perfect': StreakCalculator.isDayPerfect(date, habits, logs),
     });
   }
 
+  /// Accepts a short alias ("h2") or a real habit id.
   Habit? _findHabit(Object? id) {
+    final match = RegExp(r'^h(\d+)$').firstMatch('$id');
+    if (match != null) {
+      final i = int.parse(match.group(1)!) - 1;
+      if (i >= 0 && i < habits.length) return habits[i];
+    }
     for (final h in habits) {
       if (h.id == id) return h;
     }
@@ -280,8 +286,16 @@ class CoachTools {
     return parsed == null ? null : AppDateUtils.normalize(parsed);
   }
 
-  static Map<String, dynamic> habitJson(Habit h) => {
-        'id': h.id,
+  /// Short id shown to the model instead of the 36-character UUID, which
+  /// costs many tokens on every request. [_findHabit] maps it back.
+  static String aliasOf(List<Habit> habits, Habit h) => 'h${habits.indexOf(h) + 1}';
+
+  /// All habits as the model sees them, with short ids.
+  static List<Map<String, dynamic>> snapshot(List<Habit> habits) =>
+      [for (final h in habits) habitJson(h, aliasOf(habits, h))];
+
+  static Map<String, dynamic> habitJson(Habit h, String id) => {
+        'id': id,
         'title': h.title,
         if (h.description.isNotEmpty) 'description': h.description,
         'icon': iconNameFor(h.iconCodePoint) ?? 'check',
@@ -312,8 +326,7 @@ Map<String, dynamic> buildAnalytics({
       if (logs[AppDateUtils.toDateKey(d)]?.isHabitCompleted(h.id) ?? false) done++;
     }
     perHabit.add({
-      'id': h.id,
-      'title': h.title,
+      'id': CoachTools.aliasOf(habits, h),
       'done_days': done,
       'tracked_days': scheduled,
       if (scheduled > 0) 'completion_pct': (done * 100 / scheduled).round(),

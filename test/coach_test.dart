@@ -150,6 +150,21 @@ void main() {
     });
   });
 
+  group('Short habit ids', () {
+    test('The model sees h1, h2 and proposals map them back to real ids', () {
+      final a = Habit(id: '2f1c9d1e-aaaa-bbbb-cccc-000000000001', title: 'A', createdAt: daysAgo(5));
+      final b = Habit(id: '2f1c9d1e-aaaa-bbbb-cccc-000000000002', title: 'B', createdAt: daysAgo(5));
+      expect(CoachTools.snapshot([a, b]).map((h) => h['id']), ['h1', 'h2']);
+
+      final tools = CoachTools(habits: [a, b], logs: const {}, today: today);
+      final r = tools.handle('propose_delete_habit', {'habit_id': 'h2', 'reason': ''});
+      expect(r.planItem!.habitId, b.id);
+      // Real ids still work.
+      expect(tools.handle('propose_delete_habit', {'habit_id': a.id, 'reason': ''}).planItem!.habitId, a.id);
+      expect(tools.handle('propose_delete_habit', {'habit_id': 'h9', 'reason': ''}).planItem, isNull);
+    });
+  });
+
   group('Analytics', () {
     test('History string marks perfect, missed and today', () {
       final key = AppDateUtils.toDateKey(daysAgo(1));
@@ -234,6 +249,40 @@ void main() {
         systemInstruction: 'test',
       );
       expect(reply.text, contains('press Schedule'));
+    });
+
+    test('Stops after proposals that come with a message, saving a request', () async {
+      final turn = ModelTurn(
+        rawContent: const {'role': 'model', 'parts': []},
+        text: 'Here is your morning plan.',
+        functionCalls: const [
+          FunctionCall('propose_add_habit', {'title': 'Wake at 4:30', 'reason': ''}),
+          FunctionCall('propose_add_habit', {'title': 'Drink water', 'reason': ''}),
+        ],
+      );
+      final model = FakeModel([turn]);
+      final reply = await CoachEngine(model).reply(
+        history: const [],
+        userText: 'Morning routine',
+        tools: toolsWith(),
+        systemInstruction: 'test',
+      );
+      expect(model.requests.length, 1);
+      expect(reply.text, 'Here is your morning plan.');
+      expect(reply.newPlanItems.map((i) => i.title), ['Wake at 4:30', 'Drink water']);
+    });
+
+    test('Shortens older coach replies but keeps the latest one whole', () {
+      ChatMessage m(ChatRole r, String t) => ChatMessage(role: r, text: t, time: today);
+      final long = 'x' * 1000;
+      final contents = CoachEngine.buildContents([
+        m(ChatRole.user, 'a'),
+        m(ChatRole.coach, long),
+        m(ChatRole.user, 'b'),
+        m(ChatRole.coach, long),
+      ]);
+      expect((contents[1]['parts'][0]['text'] as String).length, CoachEngine.oldReplyChars + 1);
+      expect(contents[3]['parts'][0]['text'], long);
     });
 
     test('Builds contents: merges same-role turns, drops leading model turns, windows history', () {
