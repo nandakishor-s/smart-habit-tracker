@@ -7,6 +7,7 @@ import '../../core/utils/streak_calculator.dart';
 import '../../features/coach/coach_providers.dart';
 import '../../features/coach/data/coach_model.dart';
 import '../../features/coach/data/gemini_client.dart';
+import '../../features/coach/data/groq_client.dart';
 import '../../providers/habit_provider.dart';
 import '../../providers/theme_provider.dart';
 
@@ -25,6 +26,7 @@ class SettingsScreen extends ConsumerWidget {
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [
           _Section(title: 'AI Coach', isDark: isDark, child: const _ApiKeySection()),
+          _Section(title: 'Groq (fast backup)', isDark: isDark, child: const _GroqSection()),
           _Section(title: 'AI usage', isDark: isDark, child: _UsageSection(isDark: isDark)),
           _Section(title: 'Appearance', isDark: isDark, child: const _ThemeSection()),
           _Section(title: 'Streak freezes', isDark: isDark, child: _FreezeInfo(isDark: isDark)),
@@ -275,6 +277,184 @@ class _ApiKeySectionState extends ConsumerState<_ApiKeySection> {
   }
 }
 
+// --- Groq key, model and provider order ---
+
+class _GroqSection extends ConsumerStatefulWidget {
+  const _GroqSection();
+
+  @override
+  ConsumerState<_GroqSection> createState() => _GroqSectionState();
+}
+
+class _GroqSectionState extends ConsumerState<_GroqSection> {
+  final _keyController = TextEditingController();
+  bool _testing = false;
+  List<String>? _models;
+
+  @override
+  void dispose() {
+    _keyController.dispose();
+    super.dispose();
+  }
+
+  void _snack(String text) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+
+  Future<void> _save() async {
+    final key = _keyController.text.trim();
+    if (key.isEmpty) return;
+    await ref.read(groqKeyProvider.notifier).save(key);
+    _keyController.clear();
+    FocusManager.instance.primaryFocus?.unfocus();
+    await _test();
+  }
+
+  /// Checks the key by listing models, and moves off a model Groq retired.
+  Future<void> _test() async {
+    final key = ref.read(groqKeyProvider).value;
+    if (key == null) return;
+    setState(() => _testing = true);
+    final client = GroqClient(apiKey: key, model: ref.read(groqModelProvider));
+    try {
+      final models = await client.listModels();
+      if (!mounted) return;
+      setState(() => _models = models);
+      final current = ref.read(groqModelProvider);
+      final best = GroqClient.pickModel(current, models);
+      if (best != current) ref.read(groqModelProvider.notifier).set(best);
+      _snack('Groq key works ✓ (${models.length} models available)');
+    } on CoachModelException catch (e) {
+      if (mounted) _snack(e.userMessage);
+    } finally {
+      client.close();
+      if (mounted) setState(() => _testing = false);
+    }
+  }
+
+  Future<void> _pickModel() async {
+    if (_models == null) await _test();
+    if (!mounted) return;
+    final current = ref.read(groqModelProvider);
+    final options = {current, ...?_models}.toList();
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            for (final m in options)
+              ListTile(
+                title: Text(m, style: GoogleFonts.inter(fontSize: 14)),
+                trailing: m == current ? const Icon(Icons.check_rounded) : null,
+                onTap: () => Navigator.of(ctx).pop(m),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (picked != null) ref.read(groqModelProvider.notifier).set(picked);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final secondary = isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary;
+    final key = ref.watch(groqKeyProvider).value;
+    final hasGemini = ref.watch(apiKeyProvider).value?.isNotEmpty ?? false;
+    final first = ref.watch(coachProviderProvider);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(
+              key != null ? Icons.check_circle_rounded : Icons.key_off_rounded,
+              color: key != null ? AppColors.success : secondary,
+              size: 20,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                key != null ? 'Groq key saved' : 'No Groq key (optional)',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+              ),
+            ),
+            if (key != null) ...[
+              TextButton(
+                onPressed: _testing ? null : _test,
+                child: _testing
+                    ? const SizedBox(
+                        width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Text('Test'),
+              ),
+              IconButton(
+                onPressed: () => ref.read(groqKeyProvider.notifier).remove(),
+                icon: const Icon(Icons.delete_outline_rounded, color: AppColors.error),
+                tooltip: 'Remove key',
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _keyController,
+          obscureText: true,
+          autocorrect: false,
+          enableSuggestions: false,
+          style: GoogleFonts.inter(fontSize: 14),
+          decoration: InputDecoration(
+            labelText: key != null ? 'Replace Groq key' : 'Paste Groq key',
+            hintText: 'gsk_…',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          onSubmitted: (_) => _save(),
+        ),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerRight,
+          child: FilledButton(onPressed: _save, child: const Text('Save key')),
+        ),
+        Text(
+          'Free key at console.groq.com/keys. Very fast; used when Gemini is busy. '
+          'Stored encrypted on this phone only.',
+          style: GoogleFonts.inter(fontSize: 12, color: secondary),
+        ),
+        if (key != null) ...[
+          const Divider(height: 28),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.memory_rounded),
+            title: Text('Groq model', style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+            subtitle: Text(ref.watch(groqModelProvider), style: GoogleFonts.inter(fontSize: 13)),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: _pickModel,
+          ),
+          if (hasGemini) ...[
+            const SizedBox(height: 8),
+            Text('Answer first with', style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            SegmentedButton<CoachProvider>(
+              segments: const [
+                ButtonSegment(value: CoachProvider.gemini, label: Text('Gemini')),
+                ButtonSegment(value: CoachProvider.groq, label: Text('Groq')),
+              ],
+              selected: {first},
+              onSelectionChanged: (s) => ref.read(coachProviderProvider.notifier).set(s.first),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'The other one takes over automatically when the first is busy.',
+              style: GoogleFonts.inter(fontSize: 12, color: secondary),
+            ),
+          ],
+        ],
+      ],
+    );
+  }
+}
+
 // --- Usage ---
 
 class _UsageSection extends ConsumerWidget {
@@ -469,7 +649,8 @@ class _PrivacyNote extends StatelessWidget {
     return Text(
       'Habits and history are stored only on this phone. When you chat with the coach, '
       'your message, recent chat and a summary of your habits and streaks are sent to '
-      'Google Gemini. On the free tier, Google may use this data to improve its products, '
+      'Google Gemini (or Groq, if you added a Groq key). On the free tier, Google may use '
+      'this data to improve its products, '
       'so avoid sharing anything sensitive.',
       style: GoogleFonts.inter(
         fontSize: 12,

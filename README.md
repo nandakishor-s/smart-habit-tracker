@@ -23,7 +23,7 @@ The next big step is an **AI Coach**: you chat with Gemini about your goals, agr
   - chat about your goals
   - the coach proposes changes; you review and **Schedule** them
 - **Settings**:
-  - Gemini key (stored encrypted on the phone) and model picker
+  - Gemini and optional Groq keys (stored encrypted on the phone), model pickers, which provider answers first
   - AI usage stats (requests and tokens per day)
   - theme (saved between launches), data reset, privacy note
 - Analytics screen: stat cards (including freezes) and a monthly calendar of perfect and frozen days
@@ -85,10 +85,12 @@ The coach uses **your own** Gemini API key. No key ships with the app or lives i
 3. In the app go to **Settings → AI Coach**, paste the key and tap **Save key**. It is stored encrypted on the device (Android Keystore).
 4. No billing account is needed. Without one you stay on the free tier and cannot be charged. When the free limit is reached, the coach pauses until it resets.
 
+**Optional: Groq as a fast backup.** Create a free key at [console.groq.com/keys](https://console.groq.com/keys) (starts with `gsk_`) and save it under **Settings → Groq**. When Gemini is overloaded or out of quota, the coach switches to Groq automatically. You can also make Groq answer first. Groq runs open models such as Llama, so replies are very fast but can be a little less polished.
+
 ### Privacy
 
 - Habits and history are stored **only on the device** (Hive).
-- When you chat with the coach, your message, recent chat and a short summary of your habits and streaks are sent to **Google Gemini**. On the free tier, Google may use this to improve its products.
+- When you chat with the coach, your message, recent chat and a short summary of your habits and streaks are sent to **Google Gemini**, or to **Groq** if you added a Groq key. On the free tier, Google may use this to improve its products.
 - No analytics, ads or tracking.
 
 ---

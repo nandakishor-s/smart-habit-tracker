@@ -1,7 +1,8 @@
 /// Provider-agnostic interface for the coach's language model.
 ///
-/// Today this is implemented by [GeminiClient] (AI Studio key, REST). Moving to
-/// Firebase AI Logic for a Play Store release only needs a new implementation.
+/// Implemented by [GeminiClient] and [GroqClient]; [FallbackCoachModel] chains
+/// two of them. Moving to Firebase AI Logic for a Play Store release only
+/// needs a new implementation.
 abstract class CoachModel {
   /// Sends one request. [contents] uses the Gemini `contents` JSON shape
   /// (`{role, parts: [...]}`); [tools] are Gemini function declarations.
@@ -49,27 +50,65 @@ class CoachModelException implements Exception {
   final CoachErrorKind kind;
   final String message;
 
-  const CoachModelException(this.kind, this.message);
+  /// Shown in [userMessage], e.g. "Gemini" or "Groq".
+  final String provider;
+
+  const CoachModelException(this.kind, this.message, {this.provider = 'Gemini'});
+
+  /// Worth trying another model or provider: overloaded, slow or out of quota.
+  bool get isBusy =>
+      kind == CoachErrorKind.server ||
+      kind == CoachErrorKind.rateLimited ||
+      (kind == CoachErrorKind.network && message == 'Request timed out');
 
   /// Short, friendly text for the chat UI.
   String get userMessage {
     switch (kind) {
       case CoachErrorKind.invalidKey:
-        return 'Your Gemini API key was rejected. Check it in Settings.';
+        return 'Your $provider API key was rejected. Check it in Settings.';
       case CoachErrorKind.rateLimited:
-        return 'Free-tier limit reached for now. Wait a minute and try again '
-            '(daily limits reset at midnight Pacific time).';
+        return '$provider free-tier limit reached for now. Wait a minute and try again.';
       case CoachErrorKind.network:
-        return 'No connection to Gemini. Check your internet and try again.';
+        return message == 'Request timed out'
+            ? '$provider took too long to answer. Try again.'
+            : 'No connection to $provider. Check your internet and try again.';
       case CoachErrorKind.blocked:
-        return 'Gemini declined to answer that. Try rephrasing.';
+        return '$provider declined to answer that. Try rephrasing.';
       case CoachErrorKind.server:
-        return 'Gemini is overloaded right now, even the backup model. Try again in a minute.';
+        return '$provider is overloaded right now. Try again in a minute.';
       case CoachErrorKind.unknown:
-        return 'Something went wrong: $message';
+        return '$provider: $message';
     }
   }
 
   @override
   String toString() => 'CoachModelException($kind): $message';
+}
+
+/// Uses [primary], and switches to [backup] for the rest of the reply when
+/// [primary] is busy. Errors other than "busy" are reported as they are.
+class FallbackCoachModel implements CoachModel {
+  final CoachModel primary;
+  final CoachModel backup;
+  bool _onBackup = false;
+
+  FallbackCoachModel(this.primary, this.backup);
+
+  @override
+  Future<ModelTurn> generate({
+    required String systemInstruction,
+    required List<Map<String, dynamic>> contents,
+    List<Map<String, dynamic>> tools = const [],
+  }) async {
+    if (!_onBackup) {
+      try {
+        return await primary.generate(
+            systemInstruction: systemInstruction, contents: contents, tools: tools);
+      } on CoachModelException catch (e) {
+        if (!e.isBusy) rethrow;
+        _onBackup = true;
+      }
+    }
+    return backup.generate(systemInstruction: systemInstruction, contents: contents, tools: tools);
+  }
 }

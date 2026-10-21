@@ -60,8 +60,8 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final coach = ref.watch(coachControllerProvider);
-    final apiKey = ref.watch(apiKeyProvider);
-    final hasKey = apiKey.value?.isNotEmpty ?? false;
+    final keyState = ref.watch(hasCoachKeyProvider);
+    final hasKey = keyState.value ?? false;
 
     return Scaffold(
       appBar: AppBar(
@@ -82,7 +82,7 @@ class _CoachScreenState extends ConsumerState<CoachScreen> {
           const SizedBox(width: 8),
         ],
       ),
-      body: apiKey.isLoading
+      body: keyState.isLoading
           ? const Center(child: CircularProgressIndicator())
           : !hasKey
               ? _NoKeyView(isDark: isDark)
@@ -342,11 +342,12 @@ class _NoKeyView extends ConsumerWidget {
           children: [
             const Icon(Icons.key_rounded, size: 48, color: AppColors.primary),
             const SizedBox(height: 16),
-            Text('Add your Gemini API key',
+            Text('Add an AI key',
                 style: GoogleFonts.inter(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Text(
-              'Get a free key at aistudio.google.com/apikey, then save it in Settings. '
+              'Get a free Gemini key at aistudio.google.com/apikey or a Groq key at '
+              'console.groq.com/keys, then save it in Settings. '
               'It is stored encrypted on this phone only.',
               textAlign: TextAlign.center,
               style: GoogleFonts.inter(

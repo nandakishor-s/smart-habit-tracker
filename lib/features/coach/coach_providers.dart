@@ -7,6 +7,7 @@ import '../../core/services/secure_key_store.dart';
 import '../../providers/habit_provider.dart';
 import 'data/coach_model.dart';
 import 'data/gemini_client.dart';
+import 'data/groq_client.dart';
 import 'data/usage_tracker.dart';
 import 'domain/chat_message.dart';
 import 'domain/coach_engine.dart';
@@ -52,6 +53,68 @@ class GeminiModelNotifier extends Notifier<String> {
 
 final geminiModelProvider =
     NotifierProvider<GeminiModelNotifier, String>(GeminiModelNotifier.new);
+
+/// The user's Groq API key from secure storage (null when not set).
+class GroqKeyNotifier extends AsyncNotifier<String?> {
+  @override
+  Future<String?> build() => ref.read(secureKeyStoreProvider).readGroqKey();
+
+  Future<void> save(String key) async {
+    await ref.read(secureKeyStoreProvider).saveGroqKey(key);
+    state = AsyncData(key.trim());
+  }
+
+  Future<void> remove() async {
+    await ref.read(secureKeyStoreProvider).deleteGroqKey();
+    state = const AsyncData(null);
+  }
+}
+
+final groqKeyProvider = AsyncNotifierProvider<GroqKeyNotifier, String?>(GroqKeyNotifier.new);
+
+class GroqModelNotifier extends Notifier<String> {
+  static const _key = 'groq_model';
+
+  @override
+  String build() =>
+      (ref.watch(databaseServiceProvider).getSetting(_key) as String?) ?? GroqClient.defaultModel;
+
+  void set(String model) {
+    state = model;
+    ref.read(databaseServiceProvider).putSetting(_key, model);
+  }
+}
+
+final groqModelProvider = NotifierProvider<GroqModelNotifier, String>(GroqModelNotifier.new);
+
+enum CoachProvider { gemini, groq }
+
+/// Which provider answers first. The other one, if it has a key, is the backup.
+class CoachProviderNotifier extends Notifier<CoachProvider> {
+  static const _key = 'coach_provider';
+
+  @override
+  CoachProvider build() =>
+      (ref.watch(databaseServiceProvider).getSetting(_key) as String?) == 'groq'
+          ? CoachProvider.groq
+          : CoachProvider.gemini;
+
+  void set(CoachProvider provider) {
+    state = provider;
+    ref.read(databaseServiceProvider).putSetting(_key, provider.name);
+  }
+}
+
+final coachProviderProvider =
+    NotifierProvider<CoachProviderNotifier, CoachProvider>(CoachProviderNotifier.new);
+
+/// True when at least one AI key is saved, so the coach can run.
+final hasCoachKeyProvider = Provider<AsyncValue<bool>>((ref) {
+  final gemini = ref.watch(apiKeyProvider);
+  final groq = ref.watch(groqKeyProvider);
+  if (gemini.isLoading || groq.isLoading) return const AsyncLoading();
+  return AsyncData((gemini.value?.isNotEmpty ?? false) || (groq.value?.isNotEmpty ?? false));
+});
 
 final usageTrackerProvider =
     Provider<UsageTracker>((ref) => UsageTracker(ref.watch(databaseServiceProvider)));
@@ -150,20 +213,19 @@ class CoachController extends Notifier<CoachState> {
     final runId = ++_runId;
     state = state.copyWith(isSending: true);
     final usage = ref.read(usageTrackerProvider);
-    GeminiClient? client;
+    final clients = <void Function()>[];
 
     try {
-      final apiKey = await ref.read(apiKeyProvider.future);
-      if (apiKey == null || apiKey.isEmpty) {
-        state = state.copyWith(isSending: false, error: 'Add your Gemini API key in Settings first.');
+      final model = await _buildModel(clients);
+      if (model == null) {
+        state = state.copyWith(isSending: false, error: 'Add a Gemini or Groq API key in Settings first.');
         return;
       }
 
       final habitState = ref.read(habitNotifierProvider);
       final now = DateTime.now();
-      client = GeminiClient(apiKey: apiKey, model: ref.read(geminiModelProvider));
       final engine = CoachEngine(
-        client,
+        model,
         onUsage: (u) {
           usage.recordRequest(promptTokens: u.promptTokens, outputTokens: u.outputTokens);
         },
@@ -219,9 +281,44 @@ class CoachController extends Notifier<CoachState> {
       await usage.recordError(rateLimited: false);
       state = state.copyWith(isSending: false, error: 'Something went wrong: $e');
     } finally {
-      client?.close();
+      for (final close in clients) {
+        close();
+      }
       ref.read(usageProvider.notifier).refresh();
     }
+  }
+
+  /// The chosen provider first, the other one as backup when it has a key.
+  /// Adds each client's close function to [clients].
+  Future<CoachModel?> _buildModel(List<void Function()> clients) async {
+    final geminiKey = await ref.read(apiKeyProvider.future);
+    final groqKey = await ref.read(groqKeyProvider.future);
+    final hasGemini = geminiKey != null && geminiKey.isNotEmpty;
+    final hasGroq = groqKey != null && groqKey.isNotEmpty;
+    if (!hasGemini && !hasGroq) return null;
+
+    GeminiClient gemini() {
+      final c = GeminiClient(
+        apiKey: geminiKey!,
+        model: ref.read(geminiModelProvider),
+        // With Groq as backup, hand over at once instead of trying Flash-Lite.
+        useFallbackModel: !hasGroq,
+      );
+      clients.add(c.close);
+      return c;
+    }
+
+    GroqClient groq() {
+      final c = GroqClient(apiKey: groqKey!, model: ref.read(groqModelProvider));
+      clients.add(c.close);
+      return c;
+    }
+
+    final groqFirst = ref.read(coachProviderProvider) == CoachProvider.groq;
+    if (hasGemini && hasGroq) {
+      return groqFirst ? FallbackCoachModel(groq(), gemini()) : FallbackCoachModel(gemini(), groq());
+    }
+    return hasGroq ? groq() : gemini();
   }
 
   void toggleItem(String id) {

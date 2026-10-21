@@ -33,8 +33,13 @@ class GeminiClient implements CoachModel {
     required this.model,
     http.Client? httpClient,
     Duration retryDelay = _retryDelay,
+    this.useFallbackModel = true,
   })  : _http = httpClient ?? http.Client(),
         _delay = retryDelay;
+
+  /// False when another provider is the backup, so a busy Gemini hands over
+  /// right away instead of trying Flash-Lite first.
+  final bool useFallbackModel;
 
   /// The model that answered last (differs from [model] after a fallback).
   String get activeModel => _activeModel ?? model;
@@ -88,7 +93,7 @@ class GeminiClient implements CoachModel {
           if (!_isBusy(e2)) rethrow;
         }
       }
-      if (current == fallbackModel) rethrow;
+      if (!useFallbackModel || current == fallbackModel) rethrow;
       debugPrint('Gemini $current busy, falling back to $fallbackModel');
       try {
         final json = await call(fallbackModel);
